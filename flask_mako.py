@@ -11,18 +11,10 @@
 """
 import os, sys
 
-from flask.helpers import locked_cached_property
 from flask.signals import template_rendered
+from flask import current_app
 
-# Find the context stack so we can resolve which application is calling this
-# extension.  Starting with Flask 0.9, the _app_ctx_stack is the correct one,
-# before that we need to use the _request_ctx_stack.
-try:
-    from flask import _app_ctx_stack as stack
-except ImportError:
-    from flask import _request_ctx_stack as stack
-
-from werkzeug.debug.tbtools import Traceback, Frame, Line
+# from werkzeug.debug.tbtools import Traceback, Frame, Line
 
 from mako.lookup import TemplateLookup
 from mako.template import Template
@@ -36,66 +28,10 @@ _BABEL_IMPORTS =  'from flask.ext.babel import gettext as _, ngettext, ' \
                   'pgettext, npgettext'
 _FLASK_IMPORTS =  'from flask.helpers import url_for, get_flashed_messages'
 
-class MakoFrame(Frame):
-    """ A special `~werkzeug.debug.tbtools.Frame` object for Mako sources. """
-    def __init__(self, exc_type, exc_value, tb, name, line):
-        super(MakoFrame, self).__init__(exc_type, exc_value, tb)
-        self.info = "(translated Mako exception)"
-        self.filename = name
-        self.lineno = line
-        old_locals = self.locals
-        self.locals = dict(tb.tb_frame.f_locals['context'].kwargs)
-        self.locals['__mako_module_locals__'] = old_locals
-
-    def get_annotated_lines(self):
-        """
-        Remove frame-finding code from `~werkzeug.debug.tbtools.Frame`. This
-        code is actively dangerous when run on Mako templates because
-        Werkzeug's parsing doesn't understand their syntax. Instead, just mark
-        the current line.
-
-        """
-        lines = [Line(idx + 1, x) for idx, x in enumerate(self.sourcelines)]
-
-        try:
-            lines[self.lineno - 1].current = True
-        except IndexError:
-            pass
-
-        return lines
 
 
 class TemplateError(RichTraceback, RuntimeError):
     """ A template has thrown an error during rendering. """
-
-    def werkzeug_debug_traceback(self, exc_type, exc_value, tb):
-        """ Munge the default Werkzeug traceback to include Mako info. """
-
-        orig_type, orig_value, orig_tb = self.einfo
-        translated = Traceback(orig_type, orig_value, tb)
-
-        # Drop the "raise" frame from the traceback.
-        translated.frames.pop()
-
-        def orig_frames():
-            cur = orig_tb
-            while cur:
-                yield cur
-                cur = cur.tb_next
-
-        # Append our original frames, overwriting previous source information
-        # with the translated Mako line locators.
-        for tb, record in zip(orig_frames(), self.records):
-            name, line = record[4:6]
-            if name:
-                new_frame = MakoFrame(orig_type, orig_value, tb, name, line)
-            else:
-                new_frame = Frame(orig_type, orig_value, tb)
-
-            translated.frames.append(new_frame)
-
-        return translated
-
 
     def __init__(self, template):
         super(TemplateError, self).__init__()
@@ -245,9 +181,8 @@ def render_template(template_name, **context):
     :param context: the variables that should be available in the
                     context of the template.
     """
-    ctx = stack.top
-    return _render(_lookup(ctx.app).get_template(template_name),
-                   context, ctx.app)
+    return _render(_lookup(current_app).get_template(template_name),
+                   context, current_app)
 
 
 def render_template_string(source, **context):
@@ -259,9 +194,8 @@ def render_template_string(source, **context):
     :param context: the variables that should be available in the
                     context of the template.
     """
-    ctx = stack.top
-    template = Template(source, lookup=_lookup(ctx.app))
-    return _render(template, context, ctx.app)
+    template = Template(source, lookup=_lookup(current_app))
+    return _render(template, context, current_app)
 
 
 def render_template_def(template_name, def_name, **context):
@@ -277,6 +211,5 @@ def render_template_def(template_name, def_name, **context):
     :param context: the variables that should be available in the
                     context of the template.
     """
-    ctx = stack.top
-    template = _lookup(ctx.app).get_template(template_name)
-    return _render(template.get_def(def_name), context, ctx.app)
+    template = _lookup(current_app).get_template(template_name)
+    return _render(template.get_def(def_name), context, current_app)
